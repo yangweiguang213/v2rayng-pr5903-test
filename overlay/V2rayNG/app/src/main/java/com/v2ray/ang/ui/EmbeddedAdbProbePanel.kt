@@ -104,7 +104,7 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
                 val diagnostic = it.shell("logcat -d -t 120 -s EmbeddedShellStarter:V '*:S'")
                     .allOutput.lineSequence()
                     .filter { line -> line.contains("EmbeddedShellStarter") }
-                    .takeLast(6).joinToString(" | ").take(500)
+                    .toList().takeLast(6).joinToString(" | ").take(500)
                 error("内置服务注册失败。Shell输出：${log.takeLast(500).ifBlank { "(空)" }}；" +
                     "启动日志：${diagnostic.ifBlank { "(无)" }}")
             }
