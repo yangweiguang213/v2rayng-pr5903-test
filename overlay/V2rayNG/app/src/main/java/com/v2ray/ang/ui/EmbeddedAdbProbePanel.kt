@@ -94,9 +94,12 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
                 "无法启动 Shell 进程：${response.errorOutput.take(120)}"
             }
             var connected = false
-            repeat(40) {
-                if (EmbeddedShellBinderProvider.binder() != null) connected = true
-                if (!connected) Thread.sleep(250)
+            for (i in 0 until 40) {
+                if (EmbeddedShellBinderProvider.binder() != null) {
+                    connected = true
+                    break
+                }
+                Thread.sleep(250)
             }
             if (!connected) {
                 val log = it.shell("tail -c 1100 $BOOT_LOG").allOutput.trim()
