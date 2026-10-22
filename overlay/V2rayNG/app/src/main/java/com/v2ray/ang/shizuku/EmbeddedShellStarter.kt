@@ -33,6 +33,10 @@ object EmbeddedShellStarter {
             val packageName = args.firstOrNull { it.startsWith("--package=") }
                 ?.substringAfter("=") ?: BuildConfig.APPLICATION_ID
             require(packageName == BuildConfig.APPLICATION_ID) { "Unexpected package" }
+            val reconnectKey = requireNotNull(args.firstOrNull { it.startsWith("--reconnect-secret=") }?.substringAfter("="))
+            require(reconnectKey.length == 64) { "Invalid reconnect key" }
+            stage = "reserve single service owner"
+            val reconnectSocket = EmbeddedShellReconnect.reserve()
             stage = "prepare main looper"
             if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
 
@@ -70,6 +74,7 @@ object EmbeddedShellStarter {
             check(EmbeddedShellPublisher.publish(service, token)) {
                 "Binder provider rejected service or token"
             }
+            EmbeddedShellReconnect.serve(reconnectSocket, service, reconnectKey, application.applicationInfo.uid)
             Log.i(TAG, "Shell tethering service bound successfully")
             println("EMBEDDED_SHELL_READY")
             System.out.flush()

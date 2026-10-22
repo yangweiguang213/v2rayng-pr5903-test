@@ -182,6 +182,43 @@ assert ui.count(column_anchor) == 1
 ui = ui.replace(column_anchor, column_anchor + panel, 1)
 screen.write_text(ui)
 
+# Main-process recreation must reattach to the existing privileged owner before ADB discovery.
+update(viewmodel,
+    '        if (EmbeddedShellBinderProvider.binder() != null)\n            ShizukuStatus.READY else ShizukuStatus.NOT_RUNNING',
+    '        if (com.v2ray.ang.shizuku.EmbeddedShellReconnect.reconnect(app))\n            ShizukuStatus.READY else ShizukuStatus.NOT_RUNNING')
+
+update(receiver, '''    private fun bindIfNeeded() {
+        val embedded = EmbeddedShellBinderProvider.service()
+        if (embedded == null) {
+            failAll("Embedded shell service not running")
+            return
+        }
+        service = embedded
+        pump()
+    }''', '''    private fun bindIfNeeded() {
+        if (binding) return
+        EmbeddedShellBinderProvider.service()?.let {
+            service = it
+            pump()
+            return
+        }
+        val context = queue.peekFirst()?.context ?: return
+        binding = true
+        worker.execute {
+            EmbeddedShellReconnect.reconnect(context)
+            mainHandler.post {
+                binding = false
+                service = EmbeddedShellBinderProvider.service()
+                if (service == null) failAll("Embedded shell service not running") else pump()
+            }
+        }
+    }''')
+
+# Match only the TUN owned by this service, even when another test network is still present.
+update(java / 'shizuku/ShizukuTetheringService.kt',
+    'connectivityManager.requestNetwork(TetheringPlatformCompat.testNetworkRequest(), handle.callback)',
+    'connectivityManager.requestNetwork(EmbeddedShellNetworks.requestForInterface(handle.interfaceName), handle.callback)')
+
 # Do not subscribe to Shizuku manager lifecycle events in the self-contained APK.
 v = viewmodel.read_text()
 for obsolete in (

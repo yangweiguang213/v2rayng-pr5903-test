@@ -61,8 +61,8 @@ jobs:
           s = p.read_text()
           assert s.count('applicationId = "com.v2ray.ang"') == 1
           s = s.replace('applicationId = "com.v2ray.ang"', 'applicationId = "com.v2ray.ang.hotspot"')
-          s = s.replace('versionCode = 750', 'versionCode = 751')
-          s = s.replace('versionName = "2.3.10"', 'versionName = "2.3.10-hotspot.1"')
+          s = s.replace('versionCode = 750', 'versionCode = 752')
+          s = s.replace('versionName = "2.3.10"', 'versionName = "2.3.10-hotspot.2"')
           p.write_text(s)
           PY
 

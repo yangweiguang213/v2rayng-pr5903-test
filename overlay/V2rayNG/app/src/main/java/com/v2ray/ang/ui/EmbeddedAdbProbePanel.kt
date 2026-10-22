@@ -15,6 +15,7 @@ import com.flyfishxu.kadb.Kadb
 import com.flyfishxu.kadb.cert.KadbCert
 import com.flyfishxu.kadb.cert.OkioFilePrivateKeyStore
 import com.v2ray.ang.shizuku.EmbeddedShellBinderProvider
+import com.v2ray.ang.shizuku.EmbeddedShellReconnect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -32,6 +33,7 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
     var serviceReady by remember { mutableStateOf(EmbeddedShellBinderProvider.binder() != null) }
     var connectEndpoint by remember { mutableStateOf<LocalAdbEndpoint?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var checkingExisting by remember { mutableStateOf(true) }
     var result by remember { mutableStateOf("") }
     var scanError by remember { mutableStateOf<String?>(null) }
     var discoveryAllowed by remember { mutableStateOf(Build.VERSION.SDK_INT < 37 ||
@@ -42,7 +44,7 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
         KadbCert.configure(OkioFilePrivateKeyStore((app.noBackupFilesDir.absolutePath + "/embedded_adb_private.pem").toPath()))
         true
     }
-    val discovery = remember(app, revision, discoveryAllowed, serviceReady) {
+    val discovery = remember(app, revision, discoveryAllowed, serviceReady, checkingExisting) {
         LocalAdbDiscovery(app) { _, connect, problem ->
             connectEndpoint = connect
             scanError = problem
@@ -50,7 +52,7 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
         }
     }
     DisposableEffect(discovery) {
-        if (discoveryAllowed && !serviceReady) discovery.start()
+        if (discoveryAllowed && !serviceReady && !checkingExisting) discovery.start()
         onDispose { discovery.close() }
     }
     LaunchedEffect(serviceReady) {
@@ -69,6 +71,9 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
             scanStatus = "未找到调试服务，请开启系统无线调试后重新查找。"
     }
     LaunchedEffect(Unit) {
+        serviceReady = withContext(Dispatchers.IO) { EmbeddedShellReconnect.reconnect(app) }
+        checkingExisting = false
+        if (serviceReady) onReady()
         while (true) {
             delay(1500)
             val ready = EmbeddedShellBinderProvider.binder() != null
@@ -129,12 +134,13 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
             }
 
             val token = EmbeddedShellBinderProvider.arm()
+            val reconnectKey = EmbeddedShellReconnect.secret(app)
             // A fresh boot marker distinguishes launch failure from missing Binder IPC.
             val command = "umask 077; printf 'APP_PROCESS_QUEUED\\n' > $BOOT_LOG; " +
                 "CLASSPATH='$apk' /system/bin/app_process /system/bin " +
                 "--nice-name=v2rayng_embedded_shell " +
                 "com.v2ray.ang.shizuku.EmbeddedShellStarter " +
-                "--package=${app.packageName} --token=$token >> $BOOT_LOG 2>&1 </dev/null & " +
+                "--package=${app.packageName} --token=$token --reconnect-secret=$reconnectKey >> $BOOT_LOG 2>&1 </dev/null & " +
                 "echo LAUNCH_SENT"
             val launched = adb.shell(command)
             check(launched.exitCode == 0 && launched.allOutput.contains("LAUNCH_SENT")) {
@@ -169,13 +175,19 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
     fun start() {
         if (busy) return
         if (EmbeddedShellBinderProvider.binder() != null) { serviceReady = true; onReady(); return }
-        val endpoint = connectEndpoint ?: preferences.getInt("port", 0).takeIf { it in 1..65535 }?.let {
-            LocalAdbEndpoint(preferences.getString("host", "127.0.0.1") ?: "127.0.0.1", it)
-        }
-        if (endpoint == null) { result = "请开启无线调试并完成通知栏配对后重试。"; return }
         busy = true
         result = "正在启动授权服务…"
         scope.launch {
+            if (withContext(Dispatchers.IO) { EmbeddedShellReconnect.reconnect(app) }) {
+                serviceReady = true; busy = false; result = ""; onReady(); return@launch
+            }
+            val endpoint = connectEndpoint ?: preferences.getInt("port", 0).takeIf { it in 1..65535 }?.let {
+                LocalAdbEndpoint(preferences.getString("host", "127.0.0.1") ?: "127.0.0.1", it)
+            }
+            if (endpoint == null) {
+                result = "服务已停止；请连接 Wi-Fi 并开启无线调试后启动。已配对的手机无需重新配对。"
+                busy = false; return@launch
+            }
             val outcome = runCatching { startService(endpoint) }
             outcome.onSuccess {
                 preferences.edit().putString("host", endpoint.host).putInt("port", endpoint.port).apply()
@@ -183,7 +195,7 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
                 result = ""
                 onReady()
             }.onFailure {
-                result = "启动失败，请确认已完成通知栏配对并保持无线调试开启。"
+                result = "服务已停止，重新启动需连接 Wi-Fi 并开启无线调试。启动成功后可断开 Wi-Fi 使用热点。"
                 android.util.Log.w("EmbeddedAuthorization", "Authorization service start failed", it)
             }
             busy = false
@@ -194,20 +206,21 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
         HotspotSectionHeader(
             iconRes = com.v2ray.ang.R.drawable.ic_device_hub_24dp,
             title = "内置授权服务状态",
-            status = if (serviceReady) "已就绪" else if (busy) "启动中" else "未启动",
+            status = if (serviceReady) "已就绪" else if (checkingExisting) "恢复连接中" else if (busy) "启动中" else "未启动",
             active = serviceReady,
         )
         Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)) {
-            Text("首次配对：开启系统无线调试，在通知栏填写六位配对码。完成后返回这里启动服务。",
+            Text(if (serviceReady) "授权服务正在运行，可断开 Wi-Fi，使用移动网络分享热点。"
+                else "首次配对：连接 Wi-Fi 并开启系统无线调试，在通知栏填写六位配对码。启动成功后可断开 Wi-Fi；手机重启或服务停止后需重新启动。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth().padding(14.dp))
         }
-        if (!serviceReady) {
+        if (!serviceReady && !checkingExisting) {
             Button(onClick = { pairFromNotification() }, enabled = !busy,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("在通知栏配对") }
-            OutlinedButton(onClick = { start() }, enabled = !busy && discoveryAllowed,
+            OutlinedButton(onClick = { start() }, enabled = !busy,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                 if (busy) { CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
                 Text(if (busy) "正在启动…" else "启动授权服务")
