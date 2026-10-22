@@ -147,14 +147,14 @@ internal fun EmbeddedAdbProbePanel() {
                     val attempt = runCatching {
                         val token = EmbeddedShellBinderProvider.arm()
                         withContext(Dispatchers.IO) {
-                            val apk = app.applicationInfo.sourceDir.replace("'", "'\\\\''")
+                            val apk = app.applicationInfo.sourceDir.replace("'", "'\"'\"'")
                             val command = "CLASSPATH='$apk' /system/bin/app_process /system/bin " +
                                 "com.v2ray.ang.shizuku.EmbeddedShellStarter " +
                                 "--package=${app.packageName} --token=$token " +
                                 ">/dev/null 2>&1 </dev/null &"
                             Kadb.create("127.0.0.1", port, connectTimeout = 5000, socketTimeout = 10000).use {
-                                val check = it.shell("id -u")
-                                check(check.exitCode == 0 && check.output.trim() == "2000") {
+                                val uidResponse = it.shell("id -u")
+                                check(uidResponse.exitCode == 0 && uidResponse.output.trim() == "2000") {
                                     "ADB is not shell UID 2000"
                                 }
                                 val start = it.shell(command)
