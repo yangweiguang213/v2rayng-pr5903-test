@@ -7,6 +7,10 @@ on:
       - '.github/workflows/build-embedded-adb-spike.yml'
   workflow_dispatch:
 
+concurrency:
+  group: embedded-shell-single-build
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -94,6 +98,13 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew :app:assemblePlaystoreDebug -PABI_FILTERS=arm64-v8a --no-daemon --stacktrace
+
+      - name: Verify independent package ID
+        run: |
+          set -e
+          apk="$(find V2rayNG/app/build/outputs/apk/playstore/debug -name '*arm64-v8a*.apk' -print -quit)"
+          test -n "$apk"
+          "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" | grep -F "package: name='com.v2ray.ang.embedded'"
 
       - name: Upload test APK
         uses: actions/upload-artifact@v4
