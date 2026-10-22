@@ -1,4 +1,4 @@
-name: Embedded Shell Legacy NSD Pairing (Xiaomi Android 16)
+name: Embedded Shell Legacy NSD Pairing (Xiaomi 17 Pro)
 
 on:
   push:
@@ -52,20 +52,6 @@ jobs:
           test -x "$ANDROID_HOME/ndk/30.0.16248370/ndk-build"
           echo "NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
 
-      - name: Build HEV native libraries
-        run: |
-          bash compile-hevtun.sh
-          cp -r libs V2rayNG/app/
-
-      - name: Download matching Xray AAR
-        run: |
-          tag=$(git -C AndroidLibXrayLite describe --tags --abbrev=0)
-          echo "Using AndroidLibXrayLite tag: $tag"
-          mkdir -p V2rayNG/app/libs
-          curl --fail --location --retry 3 \
-            "https://github.com/2dust/AndroidLibXrayLite/releases/download/${tag}/libv2ray.aar" \
-            --output V2rayNG/app/libs/libv2ray.aar
-
       - name: Use separate Android package name
         run: |
           sed -i '/^    buildTypes {$/a\        getByName("debug") { applicationIdSuffix = ".embedded" }' V2rayNG/app/build.gradle.kts
@@ -107,6 +93,20 @@ jobs:
           grep -q "resolveService(" V2rayNG/app/src/main/java/com/v2ray/ang/ui/LocalAdbDiscovery.kt
           ! grep -q "registerServiceInfoCallback" V2rayNG/app/src/main/java/com/v2ray/ang/ui/LocalAdbDiscovery.kt
           ! grep -q 'kadb-mdns' V2rayNG/app/build.gradle.kts
+
+      - name: Build HEV native libraries
+        run: |
+          bash compile-hevtun.sh
+          cp -r libs V2rayNG/app/
+
+      - name: Download matching Xray AAR
+        run: |
+          tag=$(git -C AndroidLibXrayLite describe --tags --abbrev=0)
+          echo "Using AndroidLibXrayLite tag: $tag"
+          mkdir -p V2rayNG/app/libs
+          curl --fail --location --retry 3 \
+            "https://github.com/2dust/AndroidLibXrayLite/releases/download/${tag}/libv2ray.aar" \
+            --output V2rayNG/app/libs/libv2ray.aar
 
       - name: Build arm64 test APK (debug signed)
         working-directory: V2rayNG
