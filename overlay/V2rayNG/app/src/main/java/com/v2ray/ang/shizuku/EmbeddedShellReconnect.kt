@@ -6,6 +6,7 @@ import android.net.LocalSocket
 import android.net.LocalSocketAddress
 import android.os.IBinder
 import android.os.Process
+import android.util.Log
 import com.v2ray.ang.BuildConfig
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -15,7 +16,7 @@ import java.security.SecureRandom
 /** Reattach to the existing shell process without an ADB connection or a port scan. */
 internal object EmbeddedShellReconnect {
     private const val KEY = "reconnect_secret"
-    private const val PROTOCOL = "v2rayng-reconnect-1"
+    private const val PROTOCOL = "v2rayng-reconnect-2"
     private val socketName get() = BuildConfig.APPLICATION_ID + ".shell-reconnect"
 
     @Synchronized
@@ -34,16 +35,20 @@ internal object EmbeddedShellReconnect {
             ?: return false
         return runCatching {
             LocalSocket().use { socket ->
-                socket.soTimeout = 3500
                 socket.connect(LocalSocketAddress(socketName, LocalSocketAddress.Namespace.ABSTRACT))
+                // LocalSocket creates its fd in connect(); setting options before that throws.
+                socket.soTimeout = 3500
                 check(socket.peerCredentials.uid == Process.SHELL_UID) { "Unexpected service owner" }
-                val token = EmbeddedShellBinderProvider.arm()
-                DataOutputStream(socket.outputStream).apply {
-                    writeUTF(PROTOCOL); writeUTF(key); writeUTF(token); flush()
-                }
-                DataInputStream(socket.inputStream).readBoolean() && EmbeddedShellBinderProvider.binder() != null
+                val output = DataOutputStream(socket.outputStream)
+                val input = DataInputStream(socket.inputStream)
+                output.apply { writeUTF(PROTOCOL); writeUTF(key); flush() }
+                check(input.readBoolean()) { "Service not ready" }
+                // Only arm after the server is ready; do not supersede its initial boot token.
+                output.apply { writeUTF(EmbeddedShellBinderProvider.arm()); flush() }
+                input.readBoolean() && EmbeddedShellBinderProvider.binder() != null
             }
-        }.getOrDefault(false)
+        }.onFailure { Log.d("EmbeddedShellReconnect", "No reusable shell connection: ${it.javaClass.simpleName}") }
+            .getOrDefault(false)
     }
 
     // Bind before creating a service: a second launch cannot create another routing owner.
@@ -61,11 +66,14 @@ internal object EmbeddedShellReconnect {
                         val input = DataInputStream(socket.inputStream)
                         check(input.readUTF() == PROTOCOL)
                         check(MessageDigest.isEqual(input.readUTF().toByteArray(), key.toByteArray()))
+                        val output = DataOutputStream(socket.outputStream)
+                        output.apply { writeBoolean(true); flush() }
                         val token = input.readUTF()
                         check(token.length == 48)
                         val accepted = EmbeddedShellPublisher.publish(service, token)
-                        DataOutputStream(socket.outputStream).apply { writeBoolean(accepted); flush() }
-                    }
+                        output.apply { writeBoolean(accepted); flush() }
+                        if (accepted) Log.i("EmbeddedShellReconnect", "Existing shell service reattached")
+                    }.onFailure { Log.w("EmbeddedShellReconnect", "Reconnect handshake rejected", it) }
                 }
             }
         }, "EmbeddedShellReconnect").apply { isDaemon = true; start() }
