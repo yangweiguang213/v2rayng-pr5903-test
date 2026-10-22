@@ -22,6 +22,9 @@ import kotlinx.coroutines.delay
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.flyfishxu.kadb.Kadb
+import com.flyfishxu.kadb.cert.KadbCert
+import com.flyfishxu.kadb.cert.OkioFilePrivateKeyStore
+import okio.Path.Companion.toPath
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -44,6 +47,15 @@ internal fun EmbeddedAdbProbePanel() {
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val app = LocalContext.current.applicationContext
+    remember(app) {
+        // ADB host identity survives restarts, but is not backed up to cloud storage.
+        KadbCert.configure(
+            OkioFilePrivateKeyStore(
+                (app.noBackupFilesDir.absolutePath + "/embedded_adb_private.pem").toPath()
+            )
+        )
+        true
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
