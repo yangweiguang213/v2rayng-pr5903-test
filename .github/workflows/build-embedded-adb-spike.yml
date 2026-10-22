@@ -87,6 +87,8 @@ jobs:
           marker = "            Spacer(modifier = Modifier.height(8.dp))"
           assert marker in original, "Tethering screen insertion point changed"
           screen.write_text(original.replace(marker, "            EmbeddedAdbProbePanel()" + chr(10) + marker, 1))
+          PY
+          python3 integration/overlay/apply_embedded_shell.py
 
       - name: Build arm64 test APK (debug signed)
         working-directory: V2rayNG
