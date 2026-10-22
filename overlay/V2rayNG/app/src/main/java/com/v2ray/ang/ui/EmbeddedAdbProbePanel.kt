@@ -16,6 +16,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import com.v2ray.ang.shizuku.EmbeddedShellBinderProvider
+import kotlinx.coroutines.delay
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.flyfishxu.kadb.Kadb
@@ -40,6 +43,7 @@ internal fun EmbeddedAdbProbePanel() {
     var result by remember { mutableStateOf("尚未连接 ADB。此页仅用于单 APK 权限链路验证，不能代替 Shizuku 热点服务。") }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val app = LocalContext.current.applicationContext
 
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
@@ -132,6 +136,47 @@ internal fun EmbeddedAdbProbePanel() {
                 },
             ) { Text("检查 Shell") }
         }
+        Button(
+            enabled = !busy && host == "127.0.0.1" &&
+                (connectionPort.toIntOrNull()?.let { it in 1..65535 } == true),
+            onClick = {
+                busy = true
+                result = "正在启动内置 Shell 热点服务……"
+                val port = connectionPort.toInt()
+                scope.launch {
+                    val attempt = runCatching {
+                        val token = EmbeddedShellBinderProvider.arm()
+                        withContext(Dispatchers.IO) {
+                            val apk = app.applicationInfo.sourceDir.replace("'", "'\\\\''")
+                            val command = "CLASSPATH='$apk' /system/bin/app_process /system/bin " +
+                                "com.v2ray.ang.shizuku.EmbeddedShellStarter " +
+                                "--package=${app.packageName} --token=$token " +
+                                ">/dev/null 2>&1 </dev/null &"
+                            Kadb.create("127.0.0.1", port, connectTimeout = 5000, socketTimeout = 10000).use {
+                                val check = it.shell("id -u")
+                                check(check.exitCode == 0 && check.output.trim() == "2000") {
+                                    "ADB is not shell UID 2000"
+                                }
+                                val start = it.shell(command)
+                                check(start.exitCode == 0) { "Shell process startup rejected" }
+                            }
+                        }
+                        var alive = false
+                        repeat(40) {
+                            if (EmbeddedShellBinderProvider.binder() != null) alive = true
+                            if (!alive) delay(250)
+                        }
+                        check(alive) { "Shell Binder registration timed out; check logcat EmbeddedShellStarter" }
+                    }
+                    result = attempt.fold(
+                        onSuccess = { "内置 Shell 服务已注册。点击下方刷新后可以检查热点路由。" },
+                        onFailure = { "启动未成功：${it.javaClass.simpleName}：${it.message.orEmpty().take(120)}" },
+                    )
+                    busy = false
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("启动内置 Shell 热点服务（实验）") }
         Text(result, style = MaterialTheme.typography.bodySmall)
         Text(
             "安全提示：仅本机调试使用；建议测试完关闭无线调试。此功能不会自动调用高权限命令。",
