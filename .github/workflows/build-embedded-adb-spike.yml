@@ -77,14 +77,12 @@ jobs:
           text = gradle.read_text()
           marker = "    implementation(libs.shizuku.api)"
           assert text.count(marker) == 1
-          gradle.write_text(text.replace(marker, marker + '\\n    implementation("com.flyfishxu:kadb-android:2.1.5")'.replace('\\n','\n')))
-
+          gradle.write_text(text.replace(marker, marker + chr(10) + '    implementation("com.flyfishxu:kadb-android:2.1.5")'))
           screen = Path("V2rayNG/app/src/main/java/com/v2ray/ang/ui/TetheringScreen.kt")
           original = screen.read_text()
           marker = "            Spacer(modifier = Modifier.height(8.dp))"
           assert marker in original, "Tethering screen insertion point changed"
-          screen.write_text(original.replace(marker, "            EmbeddedAdbProbePanel()\n" + marker, 1))
-          PY
+          screen.write_text(original.replace(marker, "            EmbeddedAdbProbePanel()" + chr(10) + marker, 1))
 
       - name: Build arm64 test APK (debug signed)
         working-directory: V2rayNG
