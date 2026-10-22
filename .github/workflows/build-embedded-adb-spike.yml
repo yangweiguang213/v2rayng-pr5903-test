@@ -99,7 +99,7 @@ jobs:
         run: |
           python3 -m py_compile integration/overlay/apply_embedded_shell.py
           grep -R "EmbeddedAdbProbePanel(onReady" V2rayNG/app/src/main/java/com/v2ray/ang/ui/TetheringScreen.kt
-          grep -q 'kadb-mdns:2.1.5' V2rayNG/app/build.gradle.kts
+          grep -q 'kadb-mdns-android:2.1.5' V2rayNG/app/build.gradle.kts
 
       - name: Build arm64 test APK (debug signed)
         working-directory: V2rayNG
