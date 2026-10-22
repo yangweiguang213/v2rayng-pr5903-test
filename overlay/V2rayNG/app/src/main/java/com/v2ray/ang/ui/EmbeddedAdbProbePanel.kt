@@ -87,21 +87,40 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
 
     suspend fun startService(endpoint: LocalAdbEndpoint): String = withContext(Dispatchers.IO) {
         check(endpoint.port in 1..65535) { "连接端口无效" }
-        Kadb.create(endpoint.host, endpoint.port, connectTimeout = 5000, socketTimeout = 9000).use { adb ->
+        Kadb.create(endpoint.host, endpoint.port, connectTimeout = 6000, socketTimeout = 12000).use { adb ->
             val uid = adb.shell("id -u")
             check(uid.exitCode == 0 && uid.output.trim() == "2000") {
-                "无法取得 Shell 权限，请检查配对授权"
+                "ADB 连接未通过 UID 2000 检查：${uid.allOutput.take(150)}"
             }
-            val token = EmbeddedShellBinderProvider.arm()
             val apk = app.applicationInfo.sourceDir.replace("'", "'\"'\"'")
-            // No pairing code is stored or written to the diagnostic file.
-            val command = "umask 077; CLASSPATH='$apk' " +
-                "/system/bin/app_process /system/bin com.v2ray.ang.shizuku.EmbeddedShellStarter " +
-                "--package=${app.packageName} --token=$token > $BOOT_LOG 2>&1 </dev/null &"
-            val response = adb.shell(command)
-            check(response.exitCode == 0) {
-                "Shell 进程启动命令失败：${response.errorOutput.take(120)}"
+            val access = adb.shell("test -r '$apk' && echo APK_READ_OK")
+            check(access.exitCode == 0 && access.allOutput.contains("APK_READ_OK")) {
+                "ADB Shell 无法读取已安装 APK（类加载前检查）：${access.allOutput.take(180)}"
             }
+            // Unlike the old fire-and-forget bootstrap, this probe executes in the
+            // foreground and returns the exact app_process/DEX class-loading error.
+            val probe = adb.shell(
+                "CLASSPATH='$apk' /system/bin/app_process /system/bin " +
+                    "com.v2ray.ang.shizuku.EmbeddedShellStarter --probe"
+            )
+            check(probe.exitCode == 0 && probe.allOutput.contains("EMBEDDED_APP_PROCESS_OK uid=2000")) {
+                "Shell classloader 自检失败（UID 已通过）：exit=${probe.exitCode}，" +
+                    probe.allOutput.takeLast(800).ifBlank { "(无输出)" }
+            }
+
+            val token = EmbeddedShellBinderProvider.arm()
+            // A fresh boot marker distinguishes launch failure from missing Binder IPC.
+            val command = "umask 077; printf 'APP_PROCESS_QUEUED\\n' > $BOOT_LOG; " +
+                "CLASSPATH='$apk' /system/bin/app_process /system/bin " +
+                "--nice-name=v2rayng_embedded_shell " +
+                "com.v2ray.ang.shizuku.EmbeddedShellStarter " +
+                "--package=${app.packageName} --token=$token >> $BOOT_LOG 2>&1 </dev/null & " +
+                "echo LAUNCH_SENT"
+            val launched = adb.shell(command)
+            check(launched.exitCode == 0 && launched.allOutput.contains("LAUNCH_SENT")) {
+                "Shell 进程提交失败：${launched.allOutput.takeLast(300)}"
+            }
+
             var connected = false
             for (i in 0 until 40) {
                 if (EmbeddedShellBinderProvider.binder() != null) {
@@ -111,17 +130,19 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
                 Thread.sleep(250)
             }
             if (!connected) {
-                val boot = adb.shell("tail -c 1400 $BOOT_LOG").allOutput.trim()
-                val androidLog = adb.shell("logcat -d -t 90 -s EmbeddedShellStarter:V '*:S'")
-                    .allOutput.lineSequence().filter { it.contains("EmbeddedShellStarter") }
-                    .toList().takeLast(5).joinToString(" | ").take(650)
+                val diagnostic = runCatching { adb.shell("tail -c 2100 $BOOT_LOG").allOutput.trim() }
+                    .getOrElse { "(无法读取引导日志：${it.javaClass.simpleName})" }
+                val ps = runCatching {
+                    adb.shell("ps -A | grep v2rayng_embedded_shell").allOutput.trim()
+                }.getOrDefault("")
                 error(
-                    "Shell Binder 未注册；启动输出：${boot.takeLast(600).ifBlank { "(空)" }}；" +
-                        "系统日志：${androidLog.ifBlank { "(无)" }}"
+                    "内置 Shell 未注册。前置检查：ADB UID/DEX 均通过。" +
+                        "进程：${if (ps.isBlank()) "未检测到" else "仍在运行"}。" +
+                        "启动日志：${diagnostic.takeLast(850).ifBlank { "(日志文件空，需进一步检查系统限制)" }}"
                 )
             }
         }
-        "内置 Shell 已连接（UID 2000）"
+        "已建立内置 Shell 网络共享服务"
     }
 
     fun start(endpoint: LocalAdbEndpoint) {
