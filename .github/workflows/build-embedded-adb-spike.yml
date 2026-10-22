@@ -1,4 +1,4 @@
-name: Embedded Shell Legacy NSD Pairing (Xiaomi 17 Pro)
+name: Embedded Shell Boot Diagnostic and NSD Recovery (Xiaomi 17 Pro)
 
 on:
   push:
@@ -92,6 +92,8 @@ jobs:
           test -f V2rayNG/app/src/main/java/com/v2ray/ang/ui/LocalAdbDiscovery.kt
           grep -q "resolveService(" V2rayNG/app/src/main/java/com/v2ray/ang/ui/LocalAdbDiscovery.kt
           ! grep -q "registerServiceInfoCallback" V2rayNG/app/src/main/java/com/v2ray/ang/ui/LocalAdbDiscovery.kt
+          grep -q "EMBEDDED_APP_PROCESS_OK" V2rayNG/app/src/main/java/com/v2ray/ang/shizuku/EmbeddedShellStarter.kt
+          grep -q "APP_PROCESS_QUEUED" V2rayNG/app/src/main/java/com/v2ray/ang/ui/EmbeddedAdbProbePanel.kt
           ! grep -q 'kadb-mdns' V2rayNG/app/build.gradle.kts
 
       - name: Build HEV native libraries
@@ -124,7 +126,7 @@ jobs:
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: v2rayNG-embedded-shell-legacy-nsd-arm64
+          name: v2rayNG-embedded-shell-boot-diagnostics-arm64
           path: V2rayNG/app/build/outputs/apk/playstore/debug/*arm64-v8a*.apk
           if-no-files-found: error
           retention-days: 7
