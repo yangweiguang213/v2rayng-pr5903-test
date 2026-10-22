@@ -81,7 +81,7 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
     LaunchedEffect(discovery) {
         delay(9000)
         if (pairEndpoint == null && connectEndpoint == null) {
-            scanStatus = "9 秒内未找到本机 ADB 端口。检查无线调试是否开启，或展开高级设置"
+            scanStatus = "9 秒内未发现本机 ADB：\${discovery.diagnostic()}。可检查系统无线调试并重扫；若广播为 0，请使用高级设置。"
         }
     }
 
@@ -267,7 +267,7 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
             ) { Text(if (advanced) "收起高级设置" else "高级设置") }
         }
         if (advanced) {
-            Text("仅在自动发现失败时填写，通常不需要。", style = MaterialTheme.typography.bodySmall)
+            Text("可使用系统「无线调试」主页面的 IP / 连接端口和配对弹窗中的配对端口。注意：每次开启无线调试端口可能变化。", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(
                 value = manualHost, onValueChange = { manualHost = it.trim() },
                 label = { Text("本机地址（通常 127.0.0.1）") },
