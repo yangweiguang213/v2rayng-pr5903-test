@@ -33,6 +33,7 @@ object EmbeddedShellStarter {
         if (packageName != BuildConfig.APPLICATION_ID) return
 
         try {
+            Log.i(TAG, "Boot stage: shell UID verified, loading app context")
             if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
             val clazz = Class.forName("android.app.ActivityThread")
             val thread = clazz.getDeclaredMethod("systemMain").invoke(null)
@@ -55,7 +56,9 @@ object EmbeddedShellStarter {
                 set(thread, application)
             }
 
+            Log.i(TAG, "Boot stage: app context loaded, creating tethering service")
             val service: IBinder = ShizukuTetheringService(application)
+            Log.i(TAG, "Boot stage: tethering service ready, publishing binder")
             val shellContext = ShellContextCompat.create(application)
             val extras = Bundle().apply {
                 putString(EmbeddedShellBinderProvider.KEY_TOKEN, token)
