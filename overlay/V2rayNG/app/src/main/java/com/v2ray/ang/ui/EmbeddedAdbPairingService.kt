@@ -105,6 +105,12 @@ class EmbeddedAdbPairingService : Service() {
         discovery = LocalAdbDiscovery(this) { pairEndpoint, connectEndpoint, problem ->
             pair = pairEndpoint
             connect = connectEndpoint
+            connectEndpoint?.let { endpoint ->
+                getSharedPreferences("embedded_adb", MODE_PRIVATE).edit()
+                    .putString("host", endpoint.host)
+                    .putInt("port", endpoint.port)
+                    .apply()
+            }
             val notice = when {
                 pairEndpoint != null -> notification(
                     "已找到无线调试配对窗口",
