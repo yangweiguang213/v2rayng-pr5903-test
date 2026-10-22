@@ -1,4 +1,4 @@
-name: Embedded Shell One-Code Pairing APK (experimental)
+name: Embedded Shell Shizuku-style Pairing (experimental)
 
 on:
   push:
@@ -71,9 +71,10 @@ jobs:
           sed -i '/^    buildTypes {$/a\        getByName("debug") { applicationIdSuffix = ".embedded" }' V2rayNG/app/build.gradle.kts
           grep -A 3 'buildTypes {' V2rayNG/app/build.gradle.kts
 
-      - name: Add embedded ADB permissions check (experimental)
+      - name: Integrate internal ADB pairing and shell backend
         run: |
           cp integration/overlay/V2rayNG/app/src/main/java/com/v2ray/ang/ui/EmbeddedAdbProbePanel.kt V2rayNG/app/src/main/java/com/v2ray/ang/ui/
+          cp integration/overlay/V2rayNG/app/src/main/java/com/v2ray/ang/ui/LocalAdbDiscovery.kt V2rayNG/app/src/main/java/com/v2ray/ang/ui/
           python3 - <<'PY'
           from pathlib import Path
           gradle = Path("V2rayNG/app/build.gradle.kts")
@@ -81,8 +82,10 @@ jobs:
           marker = "    implementation(libs.shizuku.api)"
           assert text.count(marker) == 1
           text = text.replace(marker, marker + chr(10) +
-            '    implementation("com.flyfishxu:kadb-android:2.1.5")' + chr(10) +
-            '    implementation("com.flyfishxu:kadb-mdns-android:2.1.3")')
+            '    implementation("com.flyfishxu:kadb-android:2.1.5")')
+          # Android 16 targetSdk 36; 37 opts into newer local-network device picker rules.
+          assert 'targetSdk = 37' in text
+          text = text.replace('targetSdk = 37', 'targetSdk = 36')
           packaging_marker = '    packaging {' + chr(10)
           assert text.count(packaging_marker) == 1
           text = text.replace(packaging_marker, packaging_marker + '        resources { excludes += setOf("META-INF/LICENSE.md", "META-INF/NOTICE.md") }' + chr(10))
@@ -99,7 +102,8 @@ jobs:
         run: |
           python3 -m py_compile integration/overlay/apply_embedded_shell.py
           grep -R "EmbeddedAdbProbePanel(onReady" V2rayNG/app/src/main/java/com/v2ray/ang/ui/TetheringScreen.kt
-          grep -q 'kadb-mdns-android:2.1.3' V2rayNG/app/build.gradle.kts
+          grep -q 'targetSdk = 36' V2rayNG/app/build.gradle.kts
+          ! grep -q 'kadb-mdns' V2rayNG/app/build.gradle.kts
 
       - name: Build arm64 test APK (debug signed)
         working-directory: V2rayNG
@@ -117,7 +121,7 @@ jobs:
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: v2rayNG-embedded-shell-one-code-arm64
+          name: v2rayNG-embedded-shell-shizuku-style-arm64
           path: V2rayNG/app/build/outputs/apk/playstore/debug/*arm64-v8a*.apk
           if-no-files-found: error
           retention-days: 7
