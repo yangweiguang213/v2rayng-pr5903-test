@@ -38,7 +38,8 @@ update(
     viewmodel,
     '    private suspend fun getShizukuStatus(): ShizukuStatus = withContext(Dispatchers.IO) {\n',
     '''    private suspend fun getShizukuStatus(): ShizukuStatus = withContext(Dispatchers.IO) {
-        if (EmbeddedShellBinderProvider.binder() != null) return@withContext ShizukuStatus.READY
+        return@withContext if (EmbeddedShellBinderProvider.binder() != null)
+            ShizukuStatus.READY else ShizukuStatus.NOT_RUNNING
 ''',
 )
 update(
@@ -54,6 +55,8 @@ update(
             )
             return
         }
+        // Experimental single-APK build never silently falls back to external Shizuku.
+        return
 ''',
 )
 update(
@@ -77,7 +80,25 @@ update(
             pump()
             return
         }
+        failAll("Embedded Shell service unavailable; no external Shizuku fallback")
+        return
         if (!Shizuku.pingBinder() ||
 ''',
 )
 print("Applied embedded shell boot/service provider and core synchronization bridge.")
+
+# Give users an accurate status: this experiment does not use a Shizuku manager.
+strings = root / "res/values-zh-rCN/strings.xml"
+labels = {
+    '<string name="shizuku_status_title">Shizuku 状态</string>':
+        '<string name="shizuku_status_title">内置 Shell 服务状态</string>',
+    '<string name="shizuku_status_not_installed">未安装 Shizuku</string>':
+        '<string name="shizuku_status_not_installed">内置服务尚未启动</string>',
+    '<string name="shizuku_status_not_running">Shizuku 未运行</string>':
+        '<string name="shizuku_status_not_running">内置服务尚未启动</string>',
+}
+for before, after in labels.items():
+    update(strings, before, after)
+
+core_sync = java / "shizuku/TetheringCoreSync.kt"
+update(core_sync, "                watchShizuku(service)\n", "                // Embedded backend does not require a Shizuku manager.\n")
