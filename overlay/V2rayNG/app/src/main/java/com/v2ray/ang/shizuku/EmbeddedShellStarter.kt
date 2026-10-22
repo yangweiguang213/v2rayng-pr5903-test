@@ -74,7 +74,7 @@ object EmbeddedShellStarter {
             check(EmbeddedShellPublisher.publish(service, token)) {
                 "Binder provider rejected service or token"
             }
-            EmbeddedShellReconnect.serve(reconnectSocket, service, reconnectKey, application.applicationInfo.uid)
+            EmbeddedShellReconnect.serve(reconnectSocket, service, reconnectKey)
             Log.i(TAG, "Shell tethering service bound successfully")
             println("EMBEDDED_SHELL_READY")
             System.out.flush()
