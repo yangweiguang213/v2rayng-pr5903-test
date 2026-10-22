@@ -1,6 +1,8 @@
 package com.v2ray.ang.ui
 
 import android.content.Context
+import android.content.Intent
+import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -181,8 +183,34 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
     ) {
         Text("免 Root 热点授权", style = MaterialTheme.typography.titleMedium)
         Text(
-            "开启「开发者选项 → 无线调试 → 使用配对码配对设备」，输入六位配对码即可。" +
-                "本机端口自动识别，不需要选择局域网设备。",
+            "推荐使用通知栏配对，像 Shizuku 一样不退出系统配对窗口。后台保持发现，直接在通知里输入六位数字。",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Button(
+            enabled = !busy,
+            onClick = {
+                if (Build.VERSION.SDK_INT >= 33 &&
+                    app.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) {
+                    result = "请先在系统「应用管理 → v2rayNG 热点实验版 → 通知」中允许通知，然后重新点击。"
+                } else {
+                    runCatching {
+                        app.startForegroundService(
+                            Intent(app, EmbeddedAdbPairingService::class.java)
+                                .setAction(EmbeddedAdbPairingService.ACTION_START)
+                        )
+                    }.onSuccess {
+                        result = "配对通知已启动。现在打开系统「无线调试 → 使用配对码配对设备」，展开通知栏输入配对码。"
+                    }.onFailure {
+                        result = "无法启动通知栏配对服务：${it.javaClass.simpleName} ${it.message.orEmpty().take(120)}"
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("使用通知栏配对（推荐）") }
+        Text(
+            "下方的配对码输入框仅适用于分屏或悬浮窗口中保持系统配对弹窗开启的情况。",
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
