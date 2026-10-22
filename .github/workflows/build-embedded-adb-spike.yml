@@ -80,7 +80,9 @@ jobs:
           text = gradle.read_text()
           marker = "    implementation(libs.shizuku.api)"
           assert text.count(marker) == 1
-          text = text.replace(marker, marker + chr(10) + '    implementation("com.flyfishxu:kadb-android:2.1.5")')
+          text = text.replace(marker, marker + chr(10) +
+            '    implementation("com.flyfishxu:kadb-android:2.1.5")' + chr(10) +
+            '    implementation("com.flyfishxu:kadb-mdns:2.1.5")')
           packaging_marker = '    packaging {' + chr(10)
           assert text.count(packaging_marker) == 1
           text = text.replace(packaging_marker, packaging_marker + '        resources { excludes += setOf("META-INF/LICENSE.md", "META-INF/NOTICE.md") }' + chr(10))
@@ -89,9 +91,15 @@ jobs:
           original = screen.read_text()
           marker = "            Spacer(modifier = Modifier.height(8.dp))"
           assert marker in original, "Tethering screen insertion point changed"
-          screen.write_text(original.replace(marker, "            EmbeddedAdbProbePanel()" + chr(10) + marker, 1))
+          screen.write_text(original.replace(marker, "            EmbeddedAdbProbePanel(onReady = { onAction(ShizukuAction.Refresh) })" + chr(10) + marker, 1))
           PY
           python3 integration/overlay/apply_embedded_shell.py
+
+      - name: Validate generated integration sources
+        run: |
+          python3 -m py_compile integration/overlay/apply_embedded_shell.py
+          grep -R "EmbeddedAdbProbePanel(onReady" V2rayNG/app/src/main/java/com/v2ray/ang/ui/TetheringScreen.kt
+          grep -q 'kadb-mdns:2.1.5' V2rayNG/app/build.gradle.kts
 
       - name: Build arm64 test APK (debug signed)
         working-directory: V2rayNG
