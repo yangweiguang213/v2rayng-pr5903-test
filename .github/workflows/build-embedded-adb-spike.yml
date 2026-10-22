@@ -1,10 +1,11 @@
-name: Embedded Shell Notification Pairing and Boot Diagnostic (Xiaomi 17 Pro)
+name: Embedded Shell Android 17 Permission and Binder Fix
 
 on:
   push:
-    branches: [embedded-shell-tethering]
+    branches: [embedded-shell-tethering, fix/usb-diagnostics]
     paths:
       - '.github/workflows/build-embedded-adb-spike.yml'
+      - 'overlay/**'
   workflow_dispatch:
 
 concurrency:
@@ -31,7 +32,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: yangweiguang213/v2rayng-pr5903-test
-          ref: embedded-shell-tethering
+          ref: ${{ github.sha }}
           path: integration
 
       - name: Set up Java 21
@@ -70,9 +71,8 @@ jobs:
           assert text.count(marker) == 1
           text = text.replace(marker, marker + chr(10) +
             '    implementation("com.flyfishxu:kadb-android:2.1.5")')
-          # Android 16 targetSdk 36; 37 opts into newer local-network device picker rules.
+          # Android 17 local network access is requested explicitly in the pairing UI.
           assert 'targetSdk = 37' in text
-          text = text.replace('targetSdk = 37', 'targetSdk = 36')
           packaging_marker = '    packaging {' + chr(10)
           assert text.count(packaging_marker) == 1
           text = text.replace(packaging_marker, packaging_marker + '        resources { excludes += setOf("META-INF/LICENSE.md", "META-INF/NOTICE.md") }' + chr(10))
@@ -89,7 +89,9 @@ jobs:
         run: |
           python3 -m py_compile integration/overlay/apply_embedded_shell.py
           grep -R "EmbeddedAdbProbePanel(onReady" V2rayNG/app/src/main/java/com/v2ray/ang/ui/TetheringScreen.kt
-          grep -q 'targetSdk = 36' V2rayNG/app/build.gradle.kts
+          grep -q 'targetSdk = 37' V2rayNG/app/build.gradle.kts
+          grep -q 'ACCESS_LOCAL_NETWORK' V2rayNG/app/src/main/AndroidManifest.xml
+          grep -q 'getContentProviderExternal' V2rayNG/app/src/main/java/com/v2ray/ang/shizuku/EmbeddedShellPublisher.kt
           test -f V2rayNG/app/src/main/java/com/v2ray/ang/ui/LocalAdbDiscovery.kt
           grep -q "resolveService(" V2rayNG/app/src/main/java/com/v2ray/ang/ui/LocalAdbDiscovery.kt
           ! grep -q "registerServiceInfoCallback" V2rayNG/app/src/main/java/com/v2ray/ang/ui/LocalAdbDiscovery.kt
@@ -129,7 +131,7 @@ jobs:
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: v2rayNG-embedded-shell-notification-arm64
+          name: v2rayNG-embedded-shell-usb-fix-arm64
           path: V2rayNG/app/build/outputs/apk/playstore/debug/*arm64-v8a*.apk
           if-no-files-found: error
           retention-days: 7

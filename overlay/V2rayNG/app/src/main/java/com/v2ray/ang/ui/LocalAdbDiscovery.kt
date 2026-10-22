@@ -5,6 +5,7 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import java.net.NetworkInterface
 import java.util.Collections
 
@@ -52,7 +53,11 @@ internal class LocalAdbDiscovery(
                 onMain {
                     registered.remove(this)
                     runCatching { manager.stopServiceDiscovery(this) }
-                    update(pair, connect, "无线调试服务发现启动失败（类型=$type，错误=$errorCode）")
+                    val problem = if (errorCode == 7)
+                        "请允许本地网络访问后重新扫描（系统拒绝了调试服务发现权限）"
+                    else "无线调试服务发现启动失败（类型=$type，错误=$errorCode）"
+                    Log.w("LocalAdbDiscovery", "Discovery failed: type=$type code=$errorCode")
+                    update(pair, connect, problem)
                 }
             }
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
@@ -85,7 +90,9 @@ internal class LocalAdbDiscovery(
                                         update(pair, connect, "发现的服务不是本机地址；${diagnostic()}")
                                         return@onMain
                                     }
-                                    val endpoint = LocalAdbEndpoint(ip, serviceInfo.port)
+                                    // This service has been verified as local. Loopback avoids
+                                    // routing the phone's Wi-Fi address through an active VPN.
+                                    val endpoint = LocalAdbEndpoint("127.0.0.1", serviceInfo.port)
                                     if (pairing) { pair = endpoint; pairService = serviceInfo.serviceName }
                                     else { connect = endpoint; connectService = serviceInfo.serviceName }
                                     update(pair, connect, null)

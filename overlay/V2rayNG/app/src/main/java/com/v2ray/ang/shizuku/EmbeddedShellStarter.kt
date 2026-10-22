@@ -3,9 +3,7 @@ package com.v2ray.ang.shizuku
 import android.app.Application
 import android.app.Instrumentation
 import android.content.Context
-import android.net.Uri
 import android.os.Build
-import android.os.Bundle
 import android.os.IBinder
 import android.os.Looper
 import android.os.Process
@@ -69,17 +67,7 @@ object EmbeddedShellStarter {
                 .newInstance(application) as IBinder
 
             stage = "publish Binder to app process"
-            val contextForShell = ShellContextCompat.create(application)
-            val reply = contextForShell.contentResolver.call(
-                Uri.parse("content://" + EmbeddedShellBinderProvider.authority()),
-                EmbeddedShellBinderProvider.METHOD_PUBLISH,
-                null,
-                Bundle().apply {
-                    putString(EmbeddedShellBinderProvider.KEY_TOKEN, token)
-                    putBinder(EmbeddedShellBinderProvider.KEY_BINDER, service)
-                },
-            )
-            check(reply?.getBoolean(EmbeddedShellBinderProvider.KEY_OK) == true) {
+            check(EmbeddedShellPublisher.publish(service, token)) {
                 "Binder provider rejected service or token"
             }
             Log.i(TAG, "Shell tethering service bound successfully")

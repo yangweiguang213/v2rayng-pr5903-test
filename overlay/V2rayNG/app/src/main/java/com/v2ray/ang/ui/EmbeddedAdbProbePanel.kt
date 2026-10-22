@@ -3,6 +3,8 @@ package com.v2ray.ang.ui
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -49,6 +51,12 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var advanced by remember { mutableStateOf(false) }
     var scanStatus by remember { mutableStateOf("正在识别本机无线调试端口…") }
+    var scanError by remember { mutableStateOf<String?>(null) }
+    var discoveryAllowed by remember {
+        mutableStateOf(Build.VERSION.SDK_INT < 37 ||
+            app.checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK") ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED)
+    }
     var result by remember { mutableStateOf("") }
     var manualHost by remember { mutableStateOf("") }
     var manualPairPort by remember { mutableStateOf("") }
@@ -63,10 +71,19 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
         true
     }
 
-    val discovery = remember(app, scanGeneration) {
+    val networkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        discoveryAllowed = granted
+        scanError = null
+        scanStatus = if (granted) "正在查找本机无线调试…" else "需要允许本地网络访问，才能自动查找本机调试服务。"
+    }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        result = if (granted) "通知权限已开启，请点击通知栏配对。" else "通知未开启，可在分屏模式下输入配对码。"
+    }
+    val discovery = remember(app, scanGeneration, discoveryAllowed) {
         LocalAdbDiscovery(app) { pair, connect, problem ->
             pairEndpoint = pair
             connectEndpoint = connect
+            scanError = problem
             if (problem != null) {
                 scanStatus = problem
             } else if (pair != null || connect != null) {
@@ -75,14 +92,15 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
         }
     }
     DisposableEffect(discovery) {
-        runCatching { discovery.start() }.onFailure {
-            scanStatus = "自动发现无法启动，请打开高级设置"
+        if (discoveryAllowed) runCatching { discovery.start() }.onFailure {
+            scanError = "自动发现无法启动：${it.javaClass.simpleName}"
+            scanStatus = scanError.orEmpty()
         }
         onDispose { runCatching { discovery.close() } }
     }
     LaunchedEffect(discovery) {
         delay(9000)
-        if (pairEndpoint == null && connectEndpoint == null) {
+        if (discoveryAllowed && scanError == null && pairEndpoint == null && connectEndpoint == null) {
             scanStatus = "9 秒内未发现本机 ADB：${discovery.diagnostic()}。可检查系统无线调试并重扫；若广播为 0，请使用高级设置。"
         }
     }
@@ -182,18 +200,23 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("免 Root 热点授权", style = MaterialTheme.typography.titleMedium)
+        if (!discoveryAllowed) {
+            Text("请允许本地网络访问，以查找这台手机的无线调试端口。", style = MaterialTheme.typography.bodySmall)
+            Button(onClick = { networkPermission.launch("android.permission.ACCESS_LOCAL_NETWORK") },
+                modifier = Modifier.fillMaxWidth()) { Text("允许并查找本机调试服务") }
+        }
         Text(
             "推荐使用通知栏配对，像 Shizuku 一样不退出系统配对窗口。后台保持发现，直接在通知里输入六位数字。",
             style = MaterialTheme.typography.bodySmall,
         )
         Button(
-            enabled = !busy,
+            enabled = !busy && discoveryAllowed,
             onClick = {
                 if (Build.VERSION.SDK_INT >= 33 &&
                     app.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
                     android.content.pm.PackageManager.PERMISSION_GRANTED
                 ) {
-                    result = "请先在系统「应用管理 → v2rayNG 热点实验版 → 通知」中允许通知，然后重新点击。"
+                    notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                 } else {
                     runCatching {
                         app.startForegroundService(
@@ -285,6 +308,7 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
                     pairEndpoint = null
                     connectEndpoint = null
                     scanStatus = "正在重新扫描本机无线调试…"
+                    scanError = null
                     scanGeneration++
                 },
                 modifier = Modifier.weight(1f),
