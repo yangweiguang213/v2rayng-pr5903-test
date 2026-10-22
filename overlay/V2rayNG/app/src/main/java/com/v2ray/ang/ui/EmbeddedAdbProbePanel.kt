@@ -53,7 +53,6 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
     var manualHost by remember { mutableStateOf("") }
     var manualPairPort by remember { mutableStateOf("") }
     var manualConnectPort by remember { mutableStateOf("") }
-    var paired by remember { mutableStateOf(false) }
 
     remember(app) {
         KadbCert.configure(
@@ -158,7 +157,7 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
         )
         Button(
             enabled = !busy && code.length == 6 && (detectedPair != null ||
-                advanced && manualPairPort.toIntOrNull()?.let { it in 1..65535 } == true),
+                advanced && manualHost.isNotBlank() && (manualPairPort.toIntOrNull()?.let { it in 1..65535 } == true)),
             onClick = {
                 val endpoint = detectedPair
                 val host = endpoint?.host ?: manualHost
@@ -170,7 +169,6 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
                 scope.launch {
                     val outcome = runCatching {
                         withContext(Dispatchers.IO) { Kadb.pair(host, port, currentCode) }
-                        paired = true
                         // The _adb-tls-connect service may appear shortly after pairing.
                         var target = connectEndpoint()
                         repeat(35) {
@@ -188,7 +186,7 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
                         check(!connectedHost.isNullOrBlank() && connectedPort in 1..65535) {
                             "配对完成，但未发现无线调试连接端口。请保持 Wi-Fi/无线调试开启，稍后点击「启动服务」。"
                         }
-                        startWithEndpoint(connectedHost, connectedPort)
+                        startWithEndpoint(requireNotNull(connectedHost), connectedPort)
                     }
                     status = outcome.fold(
                         onSuccess = { onReady(); "配对成功；$it" },
