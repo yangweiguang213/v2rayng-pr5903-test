@@ -82,7 +82,7 @@ internal fun EmbeddedAdbProbePanel() {
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
-                enabled = !busy && host.isNotBlank() && (pairPort.toIntOrNull() in 1..65535) && pairingCode.length == 6,
+                enabled = !busy && host.isNotBlank() && (pairPort.toIntOrNull()?.let { it in 1..65535 } == true) && pairingCode.length == 6,
                 onClick = {
                     busy = true
                     result = "正在配对……"
@@ -103,7 +103,7 @@ internal fun EmbeddedAdbProbePanel() {
                 },
             ) { Text("配对") }
             Button(
-                enabled = !busy && host.isNotBlank() && (connectionPort.toIntOrNull() in 1..65535),
+                enabled = !busy && host.isNotBlank() && (connectionPort.toIntOrNull()?.let { it in 1..65535 } == true),
                 onClick = {
                     busy = true
                     result = "正在检查 Shell 身份……"
