@@ -165,3 +165,35 @@ update(
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />''',
 )
+
+# Single-APK mode: the original Shizuku permission buttons cannot work.
+# Put pairing first, then show the actual Binder status and routing switches.
+screen = java / "ui/TetheringScreen.kt"
+ui = screen.read_text()
+begin = ui.index('            Row(\n                modifier = Modifier\n', ui.index('title = stringResource(R.string.shizuku_status_title)'))
+end = ui.index('            Spacer(modifier = Modifier.height(8.dp))', begin)
+ui = ui[:begin] + ui[end:]
+panel = '            EmbeddedAdbProbePanel(onReady = { onAction(ShizukuAction.Refresh) })\n'
+assert ui.count(panel) == 1
+ui = ui.replace(panel, '')
+column_anchor = '                .verticalScroll(rememberScrollState()),\n        ) {\n'
+assert ui.count(column_anchor) == 1
+ui = ui.replace(column_anchor, column_anchor + panel, 1)
+screen.write_text(ui)
+
+# Do not subscribe to Shizuku manager lifecycle events in the self-contained APK.
+v = viewmodel.read_text()
+for obsolete in (
+    '        Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)\n',
+    '        Shizuku.addBinderDeadListener(binderDeadListener)\n',
+    '        Shizuku.addRequestPermissionResultListener(permissionResultListener)\n',
+):
+    assert v.count(obsolete) == 1, obsolete
+    v = v.replace(obsolete, '', 1)
+viewmodel.write_text(v)
+
+update(
+    strings,
+    '<string name="shizuku_status_open_manager">请安装或启动 Shizuku，然后刷新此页面。</string>',
+    '<string name="shizuku_status_open_manager">请先在上方完成本机无线调试授权并启动内置 Shell 服务。</string>',
+)
