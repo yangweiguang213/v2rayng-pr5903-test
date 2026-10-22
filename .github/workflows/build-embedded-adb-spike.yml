@@ -1,4 +1,4 @@
-name: Embedded ADB integration spike (experimental)
+name: Embedded Shell Tethering APK (experimental)
 
 on:
   push:
