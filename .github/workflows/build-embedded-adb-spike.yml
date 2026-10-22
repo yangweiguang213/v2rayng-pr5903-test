@@ -1,4 +1,4 @@
-name: Embedded Shell Shizuku-style Pairing (experimental)
+name: Embedded Shell Legacy NSD Pairing (Xiaomi Android 16)
 
 on:
   push:
@@ -103,6 +103,9 @@ jobs:
           python3 -m py_compile integration/overlay/apply_embedded_shell.py
           grep -R "EmbeddedAdbProbePanel(onReady" V2rayNG/app/src/main/java/com/v2ray/ang/ui/TetheringScreen.kt
           grep -q 'targetSdk = 36' V2rayNG/app/build.gradle.kts
+          test -f V2rayNG/app/src/main/java/com/v2ray/ang/ui/LocalAdbDiscovery.kt
+          grep -q "resolveService(" V2rayNG/app/src/main/java/com/v2ray/ang/ui/LocalAdbDiscovery.kt
+          ! grep -q "registerServiceInfoCallback" V2rayNG/app/src/main/java/com/v2ray/ang/ui/LocalAdbDiscovery.kt
           ! grep -q 'kadb-mdns' V2rayNG/app/build.gradle.kts
 
       - name: Build arm64 test APK (debug signed)
@@ -121,7 +124,7 @@ jobs:
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: v2rayNG-embedded-shell-shizuku-style-arm64
+          name: v2rayNG-embedded-shell-legacy-nsd-arm64
           path: V2rayNG/app/build/outputs/apk/playstore/debug/*arm64-v8a*.apk
           if-no-files-found: error
           retention-days: 7
