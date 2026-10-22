@@ -198,3 +198,20 @@ update(
     '<string name="shizuku_status_open_manager">请安装或启动 Shizuku，然后刷新此页面。</string>',
     '<string name="shizuku_status_open_manager">请先在上方完成本机无线调试授权并启动内置 Shell 服务。</string>',
 )
+
+# A foreground notification service keeps the Shizuku-style temporary pairing
+# discovery alive while Android Settings owns the screen.
+update(
+    manifest,
+    '        <service\n            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"',
+    '''        <service
+            android:name=".ui.EmbeddedAdbPairingService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="local_wireless_adb_pairing" />
+        </service>
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"''',
+)
