@@ -42,6 +42,17 @@ private const val BOOT_LOG = "/data/local/tmp/v2rayng-shell-bootstrap.log"
 
 @Composable
 internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
+    if (EmbeddedShellBinderProvider.binder() != null) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("免 Root 热点授权已完成", style = MaterialTheme.typography.titleMedium)
+            Text("内置服务已就绪，可在下方配置热点共享。", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onReady) { Text("刷新服务状态") }
+        }
+        return
+    }
     val app = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     var scanGeneration by remember { mutableIntStateOf(0) }
@@ -106,6 +117,7 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
     }
 
     suspend fun startService(endpoint: LocalAdbEndpoint): String = withContext(Dispatchers.IO) {
+        if (EmbeddedShellBinderProvider.binder() != null) return@withContext "内置服务已在运行"
         check(endpoint.port in 1..65535) { "连接端口无效" }
         Kadb.create(endpoint.host, endpoint.port, connectTimeout = 6000, socketTimeout = 12000).use { adb ->
             val uid = adb.shell("id -u")
