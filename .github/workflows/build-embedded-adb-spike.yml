@@ -1,4 +1,4 @@
-name: Embedded Shell Tethering APK (experimental)
+name: Embedded Shell One-Code Pairing APK (experimental)
 
 on:
   push:
@@ -117,7 +117,7 @@ jobs:
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: v2rayNG-embedded-shell-arm64-debug
+          name: v2rayNG-embedded-shell-one-code-arm64
           path: V2rayNG/app/build/outputs/apk/playstore/debug/*arm64-v8a*.apk
           if-no-files-found: error
           retention-days: 7
