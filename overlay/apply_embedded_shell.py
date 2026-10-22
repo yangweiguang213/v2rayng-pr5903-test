@@ -17,7 +17,7 @@ def update(path: Path, old: str, new: str) -> None:
     path.write_text(original.replace(old, new, 1))
 
 manifest = root / "AndroidManifest.xml"
-update(manifest, 'android:icon="@mipmap/ic_launcher"\n        android:label="@string/app_name"', 'android:icon="@mipmap/ic_launcher"\n        android:label="v2rayNG 热点实验版"')
+update(manifest, 'android:icon="@mipmap/ic_launcher"\n        android:label="@string/app_name"', 'android:icon="@mipmap/ic_launcher"\n        android:label="v2rayNG 热点版"')
 
 update(
     manifest,
@@ -215,3 +215,13 @@ update(
         <service
             android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"''',
 )
+
+# Replace only the presentation layer; keep all existing hotspot actions and state.
+polished = overlay / "ui/PolishedTetheringScreen.kt"
+(java / "ui/PolishedTetheringScreen.kt").write_bytes(polished.read_bytes())
+ui = screen.read_text()
+function_start = ui.index("internal fun TetheringScreen(")
+body_start = ui.index("    val routingAction = routingAction(state)", function_start)
+body_end = ui.index("\n@Composable\nprivate fun TetheringStatusSection(", body_start)
+ui = ui[:body_start] + "    PolishedTetheringScreen(state, onBackClick, onAction)\n}\n" + ui[body_end:]
+screen.write_text(ui)

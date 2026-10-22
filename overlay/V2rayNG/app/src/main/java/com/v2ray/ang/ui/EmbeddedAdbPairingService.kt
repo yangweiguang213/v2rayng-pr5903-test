@@ -76,7 +76,7 @@ class EmbeddedAdbPairingService : Service() {
                         val result = runCatching { Kadb.pair(host, port, code) }
                         result.fold(
                             onSuccess = {
-                                notifications.notify(ID, notification("无线调试配对成功", "回到 v2rayNG，点击「已配对？直接启动」"))
+                                notifications.notify(ID, notification("无线调试配对成功", "返回应用，点击「启动授权服务」"))
                             },
                             onFailure = {
                                 notifications.notify(ID, notification("配对失败", it.javaClass.simpleName + "：" + it.message.orEmpty().take(85)))
@@ -136,6 +136,8 @@ class EmbeddedAdbPairingService : Service() {
             .setStyle(Notification.BigTextStyle().bigText(description))
             .setOngoing(endpoint == null && title.startsWith("等待"))
             .setOnlyAlertOnce(true)
+            .setContentIntent(PendingIntent.getActivity(this, 113,
+                Intent(this, ShizukuActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
         if (endpoint != null) {
             val reply = Intent(this, EmbeddedAdbPairingService::class.java)
                 .setAction(ACTION_REPLY)

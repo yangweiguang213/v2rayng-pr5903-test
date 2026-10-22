@@ -1,8 +1,8 @@
-name: Embedded Shell Android 17 Permission and Binder Fix
+name: v2rayNG Hotspot Release
 
 on:
   push:
-    branches: [embedded-shell-tethering, fix/usb-diagnostics]
+    branches: [release/hotspot]
     paths:
       - '.github/workflows/build-embedded-adb-spike.yml'
       - 'overlay/**'
@@ -53,10 +53,18 @@ jobs:
           test -x "$ANDROID_HOME/ndk/30.0.16248370/ndk-build"
           echo "NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
 
-      - name: Use separate Android package name
+      - name: Configure stable hotspot package and version
         run: |
-          sed -i '/^    buildTypes {$/a\        getByName("debug") { applicationIdSuffix = ".embedded" }' V2rayNG/app/build.gradle.kts
-          grep -A 3 'buildTypes {' V2rayNG/app/build.gradle.kts
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('V2rayNG/app/build.gradle.kts')
+          s = p.read_text()
+          assert s.count('applicationId = "com.v2ray.ang"') == 1
+          s = s.replace('applicationId = "com.v2ray.ang"', 'applicationId = "com.v2ray.ang.hotspot"')
+          s = s.replace('versionCode = 750', 'versionCode = 751')
+          s = s.replace('versionName = "2.3.10"', 'versionName = "2.3.10-hotspot.1"')
+          p.write_text(s)
+          PY
 
       - name: Integrate internal ADB pairing and shell backend
         run: |
@@ -88,7 +96,9 @@ jobs:
       - name: Validate generated integration sources
         run: |
           python3 -m py_compile integration/overlay/apply_embedded_shell.py
-          grep -R "EmbeddedAdbProbePanel(onReady" V2rayNG/app/src/main/java/com/v2ray/ang/ui/TetheringScreen.kt
+          grep -q "PolishedTetheringScreen(state" V2rayNG/app/src/main/java/com/v2ray/ang/ui/TetheringScreen.kt
+          grep -q "通知栏填写" V2rayNG/app/src/main/java/com/v2ray/ang/ui/EmbeddedAdbProbePanel.kt
+          ! grep -Eq "OutlinedTextField|manualHost|manualPairPort|manualConnectPort" V2rayNG/app/src/main/java/com/v2ray/ang/ui/EmbeddedAdbProbePanel.kt
           grep -q 'targetSdk = 37' V2rayNG/app/build.gradle.kts
           grep -q 'ACCESS_LOCAL_NETWORK' V2rayNG/app/src/main/AndroidManifest.xml
           grep -q 'getContentProviderExternal' V2rayNG/app/src/main/java/com/v2ray/ang/shizuku/EmbeddedShellPublisher.kt
@@ -115,23 +125,31 @@ jobs:
             "https://github.com/2dust/AndroidLibXrayLite/releases/download/${tag}/libv2ray.aar" \
             --output V2rayNG/app/libs/libv2ray.aar
 
-      - name: Build arm64 test APK (debug signed)
+      - name: Build release APK and temporary migration APK
         working-directory: V2rayNG
         run: |
           chmod +x gradlew
-          ./gradlew :app:assemblePlaystoreDebug -PABI_FILTERS=arm64-v8a --no-daemon --stacktrace
+          ./gradlew :app:assemblePlaystoreDebug :app:assemblePlaystoreRelease -PABI_FILTERS=arm64-v8a --no-daemon --stacktrace
 
       - name: Verify independent package ID
         run: |
           set -e
-          apk="$(find V2rayNG/app/build/outputs/apk/playstore/debug -name '*arm64-v8a*.apk' -print -quit)"
+          apk="$(find V2rayNG/app/build/outputs/apk/playstore/release -name '*arm64-v8a*.apk' -print -quit)"
           test -n "$apk"
-          "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" | grep -F "package: name='com.v2ray.ang.embedded'"
+          "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" | grep -F "package: name='com.v2ray.ang.hotspot'"
+          ! "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" | grep -q 'application-debuggable'
 
-      - name: Upload test APK
+      - name: Package unsigned release and signing verifier
+        run: |
+          mkdir -p release-package/release release-package/migration release-package/tools
+          cp V2rayNG/app/build/outputs/apk/playstore/release/*arm64-v8a*.apk release-package/release/
+          cp V2rayNG/app/build/outputs/apk/playstore/debug/*arm64-v8a*.apk release-package/migration/
+          cp "$ANDROID_HOME/build-tools/37.0.0/lib/apksigner.jar" release-package/tools/
+
+      - name: Upload release package for local private signing
         uses: actions/upload-artifact@v4
         with:
-          name: v2rayNG-embedded-shell-usb-fix-arm64
-          path: V2rayNG/app/build/outputs/apk/playstore/debug/*arm64-v8a*.apk
+          name: v2rayNG-hotspot-release-arm64
+          path: release-package/
           if-no-files-found: error
           retention-days: 7
