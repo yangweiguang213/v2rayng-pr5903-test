@@ -7,14 +7,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -26,30 +27,27 @@ import androidx.compose.ui.unit.dp
 import com.flyfishxu.kadb.Kadb
 import com.flyfishxu.kadb.cert.KadbCert
 import com.flyfishxu.kadb.cert.OkioFilePrivateKeyStore
-import com.flyfishxu.kadb.mdns.KadbMdnsAndroid
-import com.flyfishxu.kadb.mdns.MdnsDiscoveryState
-import com.flyfishxu.kadb.mdns.MdnsEndpoint
 import com.v2ray.ang.shizuku.EmbeddedShellBinderProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okio.Path.Companion.toPath
 
 private const val BOOT_LOG = "/data/local/tmp/v2rayng-shell-bootstrap.log"
 
-/** Find only the phone's wireless ADB services; users normally only enter a 6-digit code. */
 @Composable
 internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
     val app = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
-    val discovery = remember(app) { KadbMdnsAndroid(app) }
-    var state by remember { mutableStateOf(MdnsDiscoveryState()) }
+    var scanGeneration by remember { mutableIntStateOf(0) }
+    var pairEndpoint by remember { mutableStateOf<LocalAdbEndpoint?>(null) }
+    var connectEndpoint by remember { mutableStateOf<LocalAdbEndpoint?>(null) }
     var code by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("正在查找无线调试服务……") }
     var advanced by remember { mutableStateOf(false) }
+    var scanStatus by remember { mutableStateOf("正在识别本机无线调试端口…") }
+    var result by remember { mutableStateOf("") }
     var manualHost by remember { mutableStateOf("") }
     var manualPairPort by remember { mutableStateOf("") }
     var manualConnectPort by remember { mutableStateOf("") }
@@ -62,36 +60,47 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
         )
         true
     }
-    LaunchedEffect(discovery) {
-        discovery.start()
-        discovery.state.collect { state = it }
+
+    val discovery = remember(app, scanGeneration) {
+        LocalAdbDiscovery(app) { pair, connect, problem ->
+            pairEndpoint = pair
+            connectEndpoint = connect
+            if (problem != null) {
+                scanStatus = problem
+            } else if (pair != null || connect != null) {
+                scanStatus = "已发现本机无线调试服务"
+            }
+        }
     }
     DisposableEffect(discovery) {
-        onDispose { discovery.close() }
+        runCatching { discovery.start() }.onFailure {
+            scanStatus = "自动发现无法启动，请打开高级设置"
+        }
+        onDispose { runCatching { discovery.close() } }
+    }
+    LaunchedEffect(discovery) {
+        delay(9000)
+        if (pairEndpoint == null && connectEndpoint == null) {
+            scanStatus = "9 秒内未找到本机 ADB 端口。检查无线调试是否开启，或展开高级设置"
+        }
     }
 
-    fun pairEndpoint(): MdnsEndpoint? = state.pairDevices.firstOrNull()
-    fun connectEndpoint(): MdnsEndpoint? = state.connectDevices.firstOrNull()
-
-    suspend fun startWithEndpoint(host: String, port: Int): String = withContext(Dispatchers.IO) {
-        require(port in 1..65535)
-        val kadb = Kadb.create(host, port, connectTimeout = 6000, socketTimeout = 9000)
-        kadb.use {
-            val uid = it.shell("id -u")
+    suspend fun startService(endpoint: LocalAdbEndpoint): String = withContext(Dispatchers.IO) {
+        check(endpoint.port in 1..65535) { "连接端口无效" }
+        Kadb.create(endpoint.host, endpoint.port, connectTimeout = 5000, socketTimeout = 9000).use { adb ->
+            val uid = adb.shell("id -u")
             check(uid.exitCode == 0 && uid.output.trim() == "2000") {
-                "无线调试未获得 Shell 权限（请重新配对）"
+                "无法取得 Shell 权限，请检查配对授权"
             }
             val token = EmbeddedShellBinderProvider.arm()
             val apk = app.applicationInfo.sourceDir.replace("'", "'\"'\"'")
-            // Shell-only diagnostic file: no secrets or pairing code are written.
+            // No pairing code is stored or written to the diagnostic file.
             val command = "umask 077; CLASSPATH='$apk' " +
-                "/system/bin/app_process /system/bin " +
-                "com.v2ray.ang.shizuku.EmbeddedShellStarter " +
-                "--package=${app.packageName} --token=$token " +
-                "> $BOOT_LOG 2>&1 </dev/null &"
-            val response = it.shell(command)
+                "/system/bin/app_process /system/bin com.v2ray.ang.shizuku.EmbeddedShellStarter " +
+                "--package=${app.packageName} --token=$token > $BOOT_LOG 2>&1 </dev/null &"
+            val response = adb.shell(command)
             check(response.exitCode == 0) {
-                "无法启动 Shell 进程：${response.errorOutput.take(120)}"
+                "Shell 进程启动命令失败：${response.errorOutput.take(120)}"
             }
             var connected = false
             for (i in 0 until 40) {
@@ -102,36 +111,48 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
                 Thread.sleep(250)
             }
             if (!connected) {
-                val log = it.shell("tail -c 1100 $BOOT_LOG").allOutput.trim()
-                val diagnostic = it.shell("logcat -d -t 120 -s EmbeddedShellStarter:V '*:S'")
-                    .allOutput.lineSequence()
-                    .filter { line -> line.contains("EmbeddedShellStarter") }
-                    .toList().takeLast(6).joinToString(" | ").take(500)
-                error("内置服务注册失败。Shell输出：${log.takeLast(500).ifBlank { "(空)" }}；" +
-                    "启动日志：${diagnostic.ifBlank { "(无)" }}")
+                val boot = adb.shell("tail -c 1400 $BOOT_LOG").allOutput.trim()
+                val androidLog = adb.shell("logcat -d -t 90 -s EmbeddedShellStarter:V '*:S'")
+                    .allOutput.lineSequence().filter { it.contains("EmbeddedShellStarter") }
+                    .toList().takeLast(5).joinToString(" | ").take(650)
+                error(
+                    "Shell Binder 未注册；启动输出：${boot.takeLast(600).ifBlank { "(空)" }}；" +
+                        "系统日志：${androidLog.ifBlank { "(无)" }}"
+                )
             }
         }
-        "已启动内置 Shell（UID 2000），无需 Shizuku"
+        "内置 Shell 已连接（UID 2000）"
     }
 
-    fun launchUsing(host: String, port: Int) {
+    fun start(endpoint: LocalAdbEndpoint) {
         if (busy) return
         busy = true
-        status = "正在连接无线调试并启动热点服务……"
+        result = "正在启动内置网络共享服务…"
         scope.launch {
-            val attempt = runCatching { startWithEndpoint(host, port) }
-            status = attempt.fold(
+            val outcome = runCatching { startService(endpoint) }
+            result = outcome.fold(
                 onSuccess = {
                     app.getSharedPreferences("embedded_adb", Context.MODE_PRIVATE).edit()
-                        .putString("last_host", host).putInt("last_port", port).apply()
+                        .putString("host", endpoint.host).putInt("port", endpoint.port).apply()
                     onReady()
                     it
                 },
-                onFailure = { "连接或启动失败：${it.message.orEmpty().take(1000)}" }
+                onFailure = { "启动失败：${it.message.orEmpty().take(1100)}" },
             )
             busy = false
         }
     }
+
+    val preferences = remember(app) { app.getSharedPreferences("embedded_adb", Context.MODE_PRIVATE) }
+    val preferredHost = manualHost.takeIf { it.isNotBlank() }
+    val discoveredConnect = connectEndpoint
+    val startEndpoint = discoveredConnect
+        ?: manualConnectPort.toIntOrNull()?.takeIf { it in 1..65535 }?.let {
+            LocalAdbEndpoint(preferredHost ?: "127.0.0.1", it)
+        }
+        ?: preferences.getInt("port", 0).takeIf { it in 1..65535 }?.let {
+            LocalAdbEndpoint(preferences.getString("host", "127.0.0.1") ?: "127.0.0.1", it)
+        }
 
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
@@ -139,101 +160,110 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
     ) {
         Text("免 Root 热点授权", style = MaterialTheme.typography.titleMedium)
         Text(
-            "在系统「开发者选项 → 无线调试 → 使用配对码配对设备」中查看六位配对码。" +
-                "配对和连接端口将自动识别，不需要手工填写。",
+            "开启「开发者选项 → 无线调试 → 使用配对码配对设备」，输入六位配对码即可。" +
+                "本机端口自动识别，不需要选择局域网设备。",
             style = MaterialTheme.typography.bodySmall,
         )
-        val detectedPair = pairEndpoint()
-        val detectedConnect = connectEndpoint()
         Text(
-            "自动发现：配对 ${if (detectedPair != null) "已找到" else "查找中"} · " +
-                "连接 ${if (detectedConnect != null) "已找到" else "查找中"}",
+            "配对端口：${if (pairEndpoint != null) "已发现" else "未发现"} · " +
+                "连接端口：${if (connectEndpoint != null) "已发现" else "未发现"}",
             style = MaterialTheme.typography.bodySmall,
         )
+        if (scanStatus.isNotBlank()) {
+            Text(scanStatus, style = MaterialTheme.typography.bodySmall)
+        }
         OutlinedTextField(
             value = code,
             onValueChange = { code = it.filter(Char::isDigit).take(6) },
-            label = { Text("六位无线调试配对码") },
+            label = { Text("六位配对码") },
             visualTransformation = PasswordVisualTransformation(),
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
+        val manualPair = manualPairPort.toIntOrNull()?.takeIf { it in 1..65535 }?.let {
+            LocalAdbEndpoint(preferredHost ?: "127.0.0.1", it)
+        }
         Button(
-            enabled = !busy && code.length == 6 && (detectedPair != null ||
-                advanced && manualHost.isNotBlank() && (manualPairPort.toIntOrNull()?.let { it in 1..65535 } == true)),
+            enabled = !busy && code.length == 6 && (pairEndpoint != null || (advanced && manualPair != null)),
             onClick = {
-                val endpoint = detectedPair
-                val host = endpoint?.host ?: manualHost
-                val port = endpoint?.port ?: manualPairPort.toIntOrNull() ?: 0
-                val currentCode = code
+                val endpoint = pairEndpoint ?: manualPair ?: return@Button
+                val pairingCode = code
                 code = ""
                 busy = true
-                status = "正在配对……"
+                result = "正在配对本机无线调试…"
                 scope.launch {
                     val outcome = runCatching {
-                        withContext(Dispatchers.IO) { Kadb.pair(host, port, currentCode) }
-                        // The _adb-tls-connect service may appear shortly after pairing.
-                        var target = connectEndpoint()
-                        repeat(35) {
-                            if (target == null) {
-                                delay(250)
-                                target = connectEndpoint()
-                            }
+                        withContext(Dispatchers.IO) {
+                            Kadb.pair(endpoint.host, endpoint.port, pairingCode)
                         }
-                        val connectedHost = target?.host ?: manualHost.takeIf { it.isNotBlank() }
-                            ?: app.getSharedPreferences("embedded_adb", Context.MODE_PRIVATE)
-                                .getString("last_host", null)
-                        val connectedPort = target?.port ?: manualConnectPort.toIntOrNull()
-                            ?: app.getSharedPreferences("embedded_adb", Context.MODE_PRIVATE)
-                                .getInt("last_port", 0)
-                        check(!connectedHost.isNullOrBlank() && connectedPort in 1..65535) {
-                            "配对完成，但未发现无线调试连接端口。请保持 Wi-Fi/无线调试开启，稍后点击「启动服务」。"
+                        result = "配对成功，正在启动服务…"
+                        var connect = startEndpoint
+                        for (i in 0 until 32) {
+                            if (connect != null) break
+                            delay(250)
+                            connect = connectEndpoint
                         }
-                        startWithEndpoint(requireNotNull(connectedHost), connectedPort)
+                        checkNotNull(connect) {
+                            "配对成功，但未发现连接端口。可重新扫描或使用高级设置。"
+                        }
+                        startService(connect)
                     }
-                    status = outcome.fold(
-                        onSuccess = { onReady(); "配对成功；$it" },
-                        onFailure = { "操作未完成：${it.message.orEmpty().take(1000)}" },
+                    result = outcome.fold(
+                        onSuccess = {
+                            val p = connectEndpoint ?: startEndpoint
+                            if (p != null) preferences.edit()
+                                .putString("host", p.host).putInt("port", p.port).apply()
+                            onReady()
+                            "配对成功，$it"
+                        },
+                        onFailure = { "配对或启动失败：${it.message.orEmpty().take(1100)}" },
                     )
                     busy = false
                 }
             },
             modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (busy) "处理中……" else "配对并启动热点服务") }
-
-        val remembered = app.getSharedPreferences("embedded_adb", Context.MODE_PRIVATE)
-        val host = detectedConnect?.host ?: manualHost.takeIf { it.isNotBlank() }
-            ?: remembered.getString("last_host", null)
-        val port = detectedConnect?.port ?: manualConnectPort.toIntOrNull()
-            ?: remembered.getInt("last_port", 0)
+        ) { Text(if (busy) "正在处理…" else "配对并启动") }
         OutlinedButton(
-            enabled = !busy && !host.isNullOrBlank() && port in 1..65535,
-            onClick = { launchUsing(host!!, port) },
+            enabled = !busy && startEndpoint != null,
+            onClick = { startEndpoint?.let { start(it) } },
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("已配对？直接启动服务") }
+        ) { Text("已经配对？直接启动") }
+        if (result.isNotBlank()) Text(result, style = MaterialTheme.typography.bodySmall)
 
-        Text(status, style = MaterialTheme.typography.bodySmall)
-        OutlinedButton(onClick = { advanced = !advanced }, modifier = Modifier.fillMaxWidth()) {
-            Text(if (advanced) "收起高级设置" else "无法自动发现？展开高级设置")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = {
+                    pairEndpoint = null
+                    connectEndpoint = null
+                    scanStatus = "正在重新扫描本机无线调试…"
+                    scanGeneration++
+                },
+                modifier = Modifier.weight(1f),
+            ) { Text("重新扫描") }
+            OutlinedButton(
+                onClick = { advanced = !advanced },
+                modifier = Modifier.weight(1f),
+            ) { Text(if (advanced) "收起高级设置" else "高级设置") }
         }
         if (advanced) {
+            Text("仅在自动发现失败时填写，通常不需要。", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(
-                value = manualHost, onValueChange = { manualHost = it },
-                label = { Text("手机的 Wi-Fi IP（例如 10.10.0.11）") },
+                value = manualHost, onValueChange = { manualHost = it.trim() },
+                label = { Text("本机地址（通常 127.0.0.1）") },
                 singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = manualPairPort,
                     onValueChange = { manualPairPort = it.filter(Char::isDigit).take(5) },
-                    label = { Text("配对端口") }, singleLine = true,
-                    modifier = Modifier.weight(1f),
+                    label = { Text("配对端口") },
+                    singleLine = true, modifier = Modifier.weight(1f),
                 )
                 OutlinedTextField(
                     value = manualConnectPort,
                     onValueChange = { manualConnectPort = it.filter(Char::isDigit).take(5) },
-                    label = { Text("连接端口") }, singleLine = true,
-                    modifier = Modifier.weight(1f),
+                    label = { Text("连接端口") },
+                    singleLine = true, modifier = Modifier.weight(1f),
                 )
             }
         }
