@@ -102,3 +102,66 @@ for before, after in labels.items():
 
 core_sync = java / "shizuku/TetheringCoreSync.kt"
 update(core_sync, "                watchShizuku(service)\n", "                // Embedded backend does not require a Shizuku manager.\n")
+
+# Keep the experimental path explicit: no hidden manager fallback or misleading
+# READY state when an external Shizuku happens to be installed.
+v = viewmodel.read_text()
+def replace_section(data, start_marker, end_marker, replacement):
+    i = data.index(start_marker)
+    j = data.index(end_marker, i)
+    return data[:i] + replacement + data[j:]
+
+v = replace_section(
+    v,
+    '    private suspend fun getShizukuStatus(): ShizukuStatus = withContext(Dispatchers.IO) {',
+    '    private fun requestShizukuPermission()',
+    '''    private suspend fun getShizukuStatus(): ShizukuStatus = withContext(Dispatchers.IO) {
+        if (EmbeddedShellBinderProvider.binder() != null)
+            ShizukuStatus.READY else ShizukuStatus.NOT_RUNNING
+    }
+
+''',
+)
+v = replace_section(
+    v,
+    '    private fun bindUserService() {',
+    '    private fun refreshTetheringStatus()',
+    '''    private fun bindUserService() {
+        if (tetheringService != null) return
+        val binder = EmbeddedShellBinderProvider.binder() ?: return
+        userServiceConnection.onServiceConnected(
+            ComponentName(app, ShizukuTetheringService::class.java), binder
+        )
+    }
+
+''',
+)
+viewmodel.write_text(v)
+
+r = receiver.read_text()
+r = replace_section(
+    r,
+    '    private fun bindIfNeeded() {',
+    '    private fun forward(',
+    '''    private fun bindIfNeeded() {
+        val embedded = EmbeddedShellBinderProvider.service()
+        if (embedded == null) {
+            failAll("Embedded shell service not running")
+            return
+        }
+        service = embedded
+        pump()
+    }
+
+''',
+)
+receiver.write_text(r)
+
+# Help Android NSD discover wireless debugging _adb-tls-pairing and _adb-tls-connect.
+update(
+    manifest,
+    '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
+    '''    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />''',
+)
