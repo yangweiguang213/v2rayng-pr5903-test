@@ -32,6 +32,7 @@ internal class LocalAdbDiscovery(
     private val registered = mutableSetOf<NsdManager.DiscoveryListener>()
 
     private fun onMain(action: () -> Unit) {
+        if (closed) return
         if (Looper.myLooper() == Looper.getMainLooper()) action()
         else handler.post { if (!closed) action() }
     }

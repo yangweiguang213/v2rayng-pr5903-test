@@ -53,6 +53,16 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
         if (discoveryAllowed && !serviceReady) discovery.start()
         onDispose { discovery.close() }
     }
+    LaunchedEffect(serviceReady) {
+        if (serviceReady) {
+            discovery.close()
+            app.stopService(Intent(app, EmbeddedAdbPairingService::class.java))
+            connectEndpoint = null
+            scanStatus = ""
+            scanError = null
+            result = ""
+        }
+    }
     LaunchedEffect(discovery) {
         delay(9000)
         if (!serviceReady && discoveryAllowed && scanError == null && connectEndpoint == null)
@@ -210,7 +220,6 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
                 serviceReady = EmbeddedShellBinderProvider.binder() != null
                 connectEndpoint = null; scanError = null; result = ""; revision++; onReady()
             }, enabled = !busy) { Text(if (serviceReady) "刷新状态" else "重新查找") }
-            if (serviceReady) TextButton(onClick = { pairFromNotification() }) { Text("重新配对") }
         }
     }
 }

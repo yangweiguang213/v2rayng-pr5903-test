@@ -166,6 +166,8 @@ class EmbeddedAdbPairingService : Service() {
     override fun onDestroy() {
         discovery?.close()
         scope.cancel()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        notifications.cancel(ID)
         super.onDestroy()
     }
 
