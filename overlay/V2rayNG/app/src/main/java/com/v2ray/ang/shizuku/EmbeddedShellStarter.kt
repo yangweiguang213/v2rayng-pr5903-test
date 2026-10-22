@@ -1,5 +1,7 @@
 package com.v2ray.ang.shizuku
 
+import android.app.Application
+import android.app.Instrumentation
 import android.content.Context
 import android.net.Uri
 import android.os.Build
@@ -11,35 +13,39 @@ import android.util.Log
 import com.v2ray.ang.BuildConfig
 
 /**
- * Shell-UID entry point launched by /system/bin/app_process after user-authorized
- * wireless ADB pairing. The existing test-network/HEV/Xray service is unchanged.
- *
- * The launcher is intentionally not an Android Service: a regular Service would
- * run under the app UID and lose the required shell networking privileges.
+ * UID 2000 app_process bootstrap for the existing fail-closed PR5903 tethering service.
+ * The --probe argument lets the app distinguish ADB issues from DEX class-loading issues.
  */
 object EmbeddedShellStarter {
     private const val TAG = "EmbeddedShellStarter"
 
     @JvmStatic
     fun main(args: Array<String>) {
-        if (Process.myUid() != Process.SHELL_UID) {
-            Log.e(TAG, "Refusing non-shell UID")
+        val uid = Process.myUid()
+        if (args.contains("--probe")) {
+            println("EMBEDDED_APP_PROCESS_OK uid=$uid sdk=${Build.VERSION.SDK_INT}")
+            System.out.flush()
             return
         }
-        val token = args.firstOrNull { it.startsWith("--token=") }?.substringAfter("=")
-        if (token.isNullOrBlank()) return
-        val packageName = args.firstOrNull { it.startsWith("--package=") }?.substringAfter("=")
-            ?: BuildConfig.APPLICATION_ID
-        if (packageName != BuildConfig.APPLICATION_ID) return
-
+        var stage = "validate arguments"
         try {
-            Log.i(TAG, "Boot stage: shell UID verified, loading app context")
+            check(uid == Process.SHELL_UID) { "Shell UID 2000 required (actual=$uid)" }
+            val token = args.firstOrNull { it.startsWith("--token=") }?.substringAfter("=")
+            require(!token.isNullOrBlank()) { "Missing session token" }
+            val packageName = args.firstOrNull { it.startsWith("--package=") }
+                ?.substringAfter("=") ?: BuildConfig.APPLICATION_ID
+            require(packageName == BuildConfig.APPLICATION_ID) { "Unexpected package" }
+            stage = "prepare main looper"
             if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
-            val clazz = Class.forName("android.app.ActivityThread")
-            val thread = clazz.getDeclaredMethod("systemMain").invoke(null)
-            val systemContext = clazz.getDeclaredMethod("getSystemContext").invoke(thread) as Context
 
-            // Reproduce only Shizuku UserService's app context creation.
+            // Follow Shizuku-API UserService.create rather than direct service construction
+            // from app_process' own class loader.
+            stage = "initialize ActivityThread"
+            val threadClass = Class.forName("android.app.ActivityThread")
+            val thread = threadClass.getDeclaredMethod("systemMain").invoke(null)
+            val systemContext = threadClass.getDeclaredMethod("getSystemContext").invoke(thread) as Context
+
+            stage = "load installed application context"
             val context = systemContext.createPackageContext(
                 packageName,
                 Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY,
@@ -47,36 +53,45 @@ object EmbeddedShellStarter {
             val loadedApk = context.javaClass.getDeclaredField("mPackageInfo").apply {
                 isAccessible = true
             }.get(context)
-            val makeApplication = loadedApk.javaClass.declaredMethods.first {
-                it.name == "makeApplication" && it.parameterTypes.size == 2
-            }.apply { isAccessible = true }
-            val application = makeApplication.invoke(loadedApk, true, null) as Context
-            clazz.getDeclaredField("mInitialApplication").apply {
+            val application = loadedApk.javaClass
+                .getDeclaredMethod("makeApplication", Boolean::class.javaPrimitiveType, Instrumentation::class.java)
+                .apply { isAccessible = true }
+                .invoke(loadedApk, true, null) as Application
+            threadClass.getDeclaredField("mInitialApplication").apply {
                 isAccessible = true
                 set(thread, application)
             }
 
-            Log.i(TAG, "Boot stage: app context loaded, creating tethering service")
-            val service: IBinder = ShizukuTetheringService(application)
-            Log.i(TAG, "Boot stage: tethering service ready, publishing binder")
-            val shellContext = ShellContextCompat.create(application)
-            val extras = Bundle().apply {
-                putString(EmbeddedShellBinderProvider.KEY_TOKEN, token)
-                putBinder(EmbeddedShellBinderProvider.KEY_BINDER, service)
-            }
-            val reply = shellContext.contentResolver.call(
+            stage = "instantiate privileged tethering service"
+            val classLoader = application.classLoader
+            val serviceClass = classLoader.loadClass("com.v2ray.ang.shizuku.ShizukuTetheringService")
+            val service = serviceClass.getConstructor(Context::class.java)
+                .newInstance(application) as IBinder
+
+            stage = "publish Binder to app process"
+            val contextForShell = ShellContextCompat.create(application)
+            val reply = contextForShell.contentResolver.call(
                 Uri.parse("content://" + EmbeddedShellBinderProvider.authority()),
                 EmbeddedShellBinderProvider.METHOD_PUBLISH,
                 null,
-                extras,
+                Bundle().apply {
+                    putString(EmbeddedShellBinderProvider.KEY_TOKEN, token)
+                    putBinder(EmbeddedShellBinderProvider.KEY_BINDER, service)
+                },
             )
             check(reply?.getBoolean(EmbeddedShellBinderProvider.KEY_OK) == true) {
-                "Embedded shell Binder registration refused"
+                "Binder provider rejected service or token"
             }
-            Log.i(TAG, "Embedded tethering Shell service started (Android ${Build.VERSION.SDK_INT})")
+            Log.i(TAG, "Shell tethering service bound successfully")
+            println("EMBEDDED_SHELL_READY")
+            System.out.flush()
             Looper.loop()
-        } catch (e: Throwable) {
-            Log.e(TAG, "Unable to initialize embedded shell service", e)
+        } catch (t: Throwable) {
+            Log.e(TAG, "Embedded Shell failed in: $stage", t)
+            // Captured by /data/local/tmp/<log>; logs never include pairing code or token.
+            System.err.println("EMBEDDED_SHELL_FAILED stage=$stage cause=${t.javaClass.simpleName}: ${t.message}")
+            t.printStackTrace(System.err)
+            System.err.flush()
         }
     }
 }
