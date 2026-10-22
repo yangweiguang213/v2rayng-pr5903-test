@@ -174,7 +174,8 @@ begin = ui.index('            Row(\n                modifier = Modifier\n', ui.i
 end = ui.index('            Spacer(modifier = Modifier.height(8.dp))', begin)
 ui = ui[:begin] + ui[end:]
 panel = '            EmbeddedAdbProbePanel(onReady = { onAction(ShizukuAction.Refresh) })\n'
-assert ui.count(panel) == 1
+# The preceding removal may already consume the old injected panel.
+assert ui.count(panel) in (0, 1)
 ui = ui.replace(panel, '')
 column_anchor = '                .verticalScroll(rememberScrollState()),\n        ) {\n'
 assert ui.count(column_anchor) == 1
