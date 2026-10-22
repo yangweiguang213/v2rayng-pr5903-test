@@ -17,7 +17,7 @@ def update(path: Path, old: str, new: str) -> None:
     path.write_text(original.replace(old, new, 1))
 
 manifest = root / "AndroidManifest.xml"
-update(manifest, 'android:label="@string/app_name"', 'android:label="v2rayNG Shell Test"')
+update(manifest, 'android:icon="@mipmap/ic_launcher"\\n        android:label="@string/app_name"', 'android:icon="@mipmap/ic_launcher"\\n        android:label="v2rayNG 热点实验版"')
 
 update(
     manifest,
