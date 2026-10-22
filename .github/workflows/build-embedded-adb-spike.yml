@@ -5,7 +5,6 @@ on:
     branches: [embedded-shell-tethering]
     paths:
       - '.github/workflows/build-embedded-adb-spike.yml'
-      - 'overlay/**'
   workflow_dispatch:
 
 permissions:
