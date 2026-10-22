@@ -81,7 +81,7 @@ internal fun EmbeddedAdbProbePanel(onReady: () -> Unit) {
     LaunchedEffect(discovery) {
         delay(9000)
         if (pairEndpoint == null && connectEndpoint == null) {
-            scanStatus = "9 秒内未发现本机 ADB：\${discovery.diagnostic()}。可检查系统无线调试并重扫；若广播为 0，请使用高级设置。"
+            scanStatus = "9 秒内未发现本机 ADB：${discovery.diagnostic()}。可检查系统无线调试并重扫；若广播为 0，请使用高级设置。"
         }
     }
 
